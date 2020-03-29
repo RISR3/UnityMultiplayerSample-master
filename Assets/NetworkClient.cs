@@ -47,7 +47,7 @@ public class NetworkClient : MonoBehaviour
 
     private void OnConnect()
     {
-        Debug.Log("Connected!");
+        Debug.Log("Connected");
     }
     private void OnData(DataStreamReader stream)
     {
@@ -62,7 +62,7 @@ public class NetworkClient : MonoBehaviour
         }
         catch (System.ArgumentException e)
         {
-            Debug.LogError(e.ToString() + "\nFailed To Load. Disconnect");
+            Debug.LogError(e.ToString() + "\nFailed To Load. Disconnecting");
             Disconnect();
             return;
         }
@@ -73,7 +73,7 @@ public class NetworkClient : MonoBehaviour
             {
                 case Commands.NEW_CLIENT:
                 {
-                    Debug.Log("A Client Appears!");
+                    Debug.Log("Client Available");
                     NewPlayer np = JsonUtility.FromJson<NewPlayer>(returnData);
                     Debug.Log(np.player.ToString());
                     SpawnPlayers(np.player);
@@ -89,7 +89,7 @@ public class NetworkClient : MonoBehaviour
                 {
                     DisconnectedPlayer dp = JsonUtility.FromJson<DisconnectedPlayer>(returnData);
                     DestroyPlayers(dp.disconnect);
-                    Debug.Log("A Client Disappers!");
+                    Debug.Log("Client Unavailable");
                     break;
                 }
                 case Commands.CLIENT_LIST:
@@ -108,7 +108,7 @@ public class NetworkClient : MonoBehaviour
                     break;
                 }
                 default:
-                    Debug.Log("Error!");
+                    Debug.Log("Failure");
                     break;
             }
         }
@@ -121,12 +121,12 @@ public class NetworkClient : MonoBehaviour
     }
     private void Disconnect()
     {
-        Debug.Log("Disconnecting...");
+        Debug.Log("Disconnecting");
         m_Connection.Disconnect(m_Driver);
     }
     private void OnDisconnect()
     {
-        Debug.Log("Client Was Disconnected!");
+        Debug.Log("Client Failed to Connect");
         m_Connection = default(NetworkConnection);
     }
 
@@ -136,7 +136,7 @@ public class NetworkClient : MonoBehaviour
 
         if (!m_Connection.IsCreated)
         {
-            Debug.Log("Connection Error!");
+            Debug.Log("Connection Failure");
             return;
         }
 
@@ -164,7 +164,7 @@ public class NetworkClient : MonoBehaviour
     {
         if (players.ContainsKey(p.id))
         {
-            Debug.LogError("Player Exists Already!");
+            Debug.LogError("Player In Instance");
             return;
         }
         Debug.Log(p.ToString());
