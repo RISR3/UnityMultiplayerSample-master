@@ -1,95 +1,149 @@
-﻿using UnityEngine;
+﻿using System.Text;
+using System.Collections.Generic;
+using UnityEngine;
 using Unity.Collections;
 using Unity.Networking.Transport;
-using NetworkMessages;
-using NetworkObjects;
-using System;
-using System.Text;
+using NetworkData;
 
+//NetworkClient Script
 public class NetworkClient : MonoBehaviour
 {
+    public static NetworkClient instance { get; private set; }
+
+    public string IP;
+    public ushort Port;
+    public GameObject cube;
+
     public NetworkDriver m_Driver;
     public NetworkConnection m_Connection;
-    public string serverIP;
-    public ushort serverPort;
 
-    
-    void Start ()
+    public string myID { get; private set; }
+    private Dictionary<string, GameObject> players;
+
+    private void Awake()
     {
+        if (instance == null)
+        {
+            instance = this;
+        }
+        else
+        {
+            Destroy(this);
+        }
+
         m_Driver = NetworkDriver.Create();
         m_Connection = default(NetworkConnection);
-        var endpoint = NetworkEndPoint.Parse(serverIP,serverPort);
+        
+        var endpoint = NetworkEndPoint.Parse(IP, Port);
         m_Connection = m_Driver.Connect(endpoint);
-    }
-    
-    void SendToServer(string message){
-        var writer = m_Driver.BeginSend(m_Connection);
-        NativeArray<byte> bytes = new NativeArray<byte>(Encoding.ASCII.GetBytes(message),Allocator.Temp);
-        writer.WriteBytes(bytes);
-        m_Driver.EndSend(writer);
-    }
 
-    void OnConnect(){
-        Debug.Log("We are now connected to the server");
-
-        //// Example to send a handshake message:
-        // HandshakeMsg m = new HandshakeMsg();
-        // m.player.id = m_Connection.InternalId.ToString();
-        // SendToServer(JsonUtility.ToJson(m));
-    }
-
-    void OnData(DataStreamReader stream){
-        NativeArray<byte> bytes = new NativeArray<byte>(stream.Length,Allocator.Temp);
-        stream.ReadBytes(bytes);
-        string recMsg = Encoding.ASCII.GetString(bytes.ToArray());
-        NetworkHeader header = JsonUtility.FromJson<NetworkHeader>(recMsg);
-
-        switch(header.cmd){
-            case Commands.HANDSHAKE:
-            HandshakeMsg hsMsg = JsonUtility.FromJson<HandshakeMsg>(recMsg);
-            Debug.Log("Handshake message received!");
-            break;
-            case Commands.PLAYER_UPDATE:
-            PlayerUpdateMsg puMsg = JsonUtility.FromJson<PlayerUpdateMsg>(recMsg);
-            Debug.Log("Player update message received!");
-            break;
-            case Commands.SERVER_UPDATE:
-            ServerUpdateMsg suMsg = JsonUtility.FromJson<ServerUpdateMsg>(recMsg);
-            Debug.Log("Server update message received!");
-            break;
-            default:
-            Debug.Log("Unrecognized message received!");
-            break;
-        }
-    }
-
-    void Disconnect(){
-        m_Connection.Disconnect(m_Driver);
-        m_Connection = default(NetworkConnection);
-    }
-
-    void OnDisconnect(){
-        Debug.Log("Client got disconnected from server");
-        m_Connection = default(NetworkConnection);
+        players = new Dictionary<string, GameObject>();
     }
 
     public void OnDestroy()
     {
         m_Driver.Dispose();
-    }   
-    void Update()
+    }
+
+    private void OnConnect()
+    {
+        Debug.Log("Connected!");
+    }
+    private void OnData(DataStreamReader stream)
+    {
+        NativeArray<byte> message = new NativeArray<byte>(stream.Length, Allocator.Temp);
+        stream.ReadBytes(message);
+        string returnData = Encoding.ASCII.GetString(message.ToArray());
+
+        NetworkHeader header = new NetworkHeader();
+        try
+        {
+            header = JsonUtility.FromJson<NetworkHeader>(returnData);
+        }
+        catch (System.ArgumentException e)
+        {
+            Debug.LogError(e.ToString() + "\nFailed To Load. Disconnect");
+            Disconnect();
+            return;
+        }
+
+        try
+        {
+            switch (header.cmd)
+            {
+                case Commands.NEW_CLIENT:
+                {
+                    Debug.Log("A Client Appears!");
+                    NewPlayer np = JsonUtility.FromJson<NewPlayer>(returnData);
+                    Debug.Log(np.player.ToString());
+                    SpawnPlayers(np.player);
+                    break;
+                }
+                case Commands.UPDATE:
+                {
+                    UpdatedPlayer up = JsonUtility.FromJson<UpdatedPlayer>(returnData);
+                    UpdatePlayers(up.update);
+                    break;
+                }
+                case Commands.CLIENT_DROPPED:
+                {
+                    DisconnectedPlayer dp = JsonUtility.FromJson<DisconnectedPlayer>(returnData);
+                    DestroyPlayers(dp.disconnect);
+                    Debug.Log("A Client Disappers!");
+                    break;
+                }
+                case Commands.CLIENT_LIST:
+                {
+                    ConnectedPlayer cp = JsonUtility.FromJson<ConnectedPlayer>(returnData);
+                    SpawnPlayers(cp.connect);
+                    Debug.Log("Client_List");
+                    break;
+                }
+                case Commands.OWN_ID:
+                {
+                    NewPlayer p = JsonUtility.FromJson<NewPlayer>(returnData);
+                    myID = p.player.id;
+                    SpawnPlayers(p.player);
+                    Debug.Log("PlayerID");
+                    break;
+                }
+                default:
+                    Debug.Log("Error!");
+                    break;
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError(e.ToString() + "\nMessage Contents Failed to Load. Disconnect");
+            Disconnect();
+            return;
+        }
+    }
+    private void Disconnect()
+    {
+        Debug.Log("Disconnecting...");
+        m_Connection.Disconnect(m_Driver);
+    }
+    private void OnDisconnect()
+    {
+        Debug.Log("Client Was Disconnected!");
+        m_Connection = default(NetworkConnection);
+    }
+
+    private void Update()
     {
         m_Driver.ScheduleUpdate().Complete();
 
         if (!m_Connection.IsCreated)
         {
+            Debug.Log("Connection Error!");
             return;
         }
 
         DataStreamReader stream;
         NetworkEvent.Type cmd;
-        cmd = m_Connection.PopEvent(m_Driver, out stream);
-        while (cmd != NetworkEvent.Type.Empty)
+        
+        while ((cmd = m_Connection.PopEvent(m_Driver, out stream)) != NetworkEvent.Type.Empty)
         {
             if (cmd == NetworkEvent.Type.Connect)
             {
@@ -103,8 +157,64 @@ public class NetworkClient : MonoBehaviour
             {
                 OnDisconnect();
             }
-
-            cmd = m_Connection.PopEvent(m_Driver, out stream);
         }
+    }
+
+    private void SpawnPlayers(Player p)
+    {
+        if (players.ContainsKey(p.id))
+        {
+            Debug.LogError("Player Exists Already!");
+            return;
+        }
+        Debug.Log(p.ToString());
+        GameObject temp = Instantiate(cube, p.position, p.rotation);
+        temp.GetComponent<NetworkCharacter>().SetNetworkID(p.id);
+        temp.GetComponent<NetworkCharacter>().Setmoveable(p.id == myID);
+        temp.GetComponent<Renderer>().material.color = new Color(p.color.R, p.color.G, p.color.B, 1.0f);
+        players.Add(p.id, temp);
+    }
+    private void SpawnPlayers(Player[] p)
+    {
+        foreach (Player player in p)
+        {
+            SpawnPlayers(player);
+        }
+    }
+    private void UpdatePlayers(Player[] p)
+    {
+        foreach (Player player in p)
+        {
+            if (players.ContainsKey(player.id))
+            {
+                players[player.id].transform.position = player.position;
+                players[player.id].transform.rotation = player.rotation;
+            }
+        }
+    }
+    private void DestroyPlayers(Player[] p)
+    {
+        foreach (Player player in p)
+        {
+            if (players.ContainsKey(player.id))
+            {
+                Destroy(players[player.id]);
+                players.Remove(player.id);
+            }
+        }
+    }
+
+    private void SendData(object data)
+    {
+        var writer = m_Driver.BeginSend(m_Connection);
+        NativeArray<byte> sendBytes = new NativeArray<byte>(Encoding.ASCII.GetBytes(JsonUtility.ToJson(data)), Allocator.Temp);
+        writer.WriteBytes(sendBytes);
+        m_Driver.EndSend(writer);
+    }
+    public void SendInput(Vector3 input)
+    {
+        PlayerInput playerInput = new PlayerInput();
+        playerInput.input = input;
+        SendData(playerInput);
     }
 }
